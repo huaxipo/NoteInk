@@ -1,0 +1,31 @@
+# Gradle
+.gradle/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 本机路径配置
+local.properties
+gradle.properties.bak
+
+# IDE
+.idea/
+*.iml
+*.hprof
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 签名材料
+*.jks
+*.keystore
+keystore.properties
+
+# 安装包不进 git 历史，统一放在 GitHub Releases
+apk/
+
+# 本地私有的验证材料（第三方课件截图等），不入库
+.local/

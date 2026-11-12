@@ -1,0 +1,19 @@
+# 默认由 Git 自动判断文本/二进制
+* text=auto
+
+# Shell 脚本必须保持 LF，否则在 Linux/macOS 上无法执行
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Windows 批处理保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制
+*.apk binary
+*.jar binary
+*.png binary
+*.jpg binary
+*.webp binary
+*.ttf binary
+*.otf binary

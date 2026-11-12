@@ -99,7 +99,6 @@ Windows 上用 `gradlew.bat`。若本机已把 JDK / SDK 放在特定位置，�
 - 导入过程显示「已完成 / 总页数」，长文档不再像卡死
 - 多文件导入显示 `(2/3)` 进度
 
-对 100 页 PDF 的粗略估计：1.0.0 约 40–60 秒，1.1.0 约 6–10 秒（视 CPU 而定）。没在真机上实测过，实际数值以你手机为准。
 
 ## 1.2.0 更新
 
@@ -654,19 +653,6 @@ PowerPoint 在「文字太多、自动缩小」时并不改字号，而是把缩
 - 导出：编辑器「更多」里可导出本页 PNG / 整本 PDF / 打包备份；书架长按笔记本菜单里也有整本导出与备份
 - 恢复备份：书架右上角「恢复备份」，选一个 `.noteink.zip`，会还原成一个新笔记本
 - 橡皮模式：选中橡皮后工具栏底部会多出「整笔 / 局部」两个选项
-
-## 重新构建
-
-工具链已装好，全部在 `E:\note\.android-build\`（JDK 17 + Gradle 8.7 + Android SDK 34），不污染系统环境。
-
-```bat
-cd /d E:\note\NoteInk
-build.bat assembleRelease        :: 输出 app\build\outputs\apk\release\app-release.apk
-build.bat assembleDebug          :: 调试版
-build.bat installRelease         :: 手机连上 USB 后直接装
-```
-
-`build.bat` 里只用了相对路径（`%~dp0..\.android-build`），整个 `E:\note` 目录挪位置也不用改配置。
 
 ## 源码结构
 

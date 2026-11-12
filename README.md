@@ -6,14 +6,14 @@
 
 | 文件 | 说明 |
 |---|---|
-| [NoteInk-1.5.0.apk](https://github.com/huaxipo/NoteInk/releases/latest) | **推荐**。release 版，已签名，可直接安装 |
-| NoteInk-1.5.0-debug.apk | 调试版，保留调试信息，在同一个 Release 页面的 Assets 中 |
+| [NoteInk-1.5.1.apk](https://github.com/huaxipo/NoteInk/releases/latest) | **推荐**。release 版，已签名，可直接安装 |
+| NoteInk-1.5.1-debug.apk | 调试版，保留调试信息，在同一个 Release 页面的 Assets 中 |
 
 安装包不打进 git 历史（每个 6~9MB，会让 clone 变得很慢），统一放在
 [Releases](https://github.com/huaxipo/NoteInk/releases) 页面。
 
 从旧版直接覆盖安装即可升级，笔记数据保留（同包名、同签名）。
-装好后**书架标题下方会显示 `v1.5.0`**，可用来确认装的是哪一版。
+装好后**书架标题下方会显示 `v1.5.1`**，可用来确认装的是哪一版。
 
 > 1.2.1 起导入方式有变化（源文件会额外保留一份、文本页存 PNG），1.3.0 起 PPT 也会保留源文件。
 > 1.4.1 起**旧笔记本会自动重画底图**（保留笔迹），不用再删掉重导入。
@@ -138,6 +138,16 @@ Windows 上用 `gradlew.bat`。若本机已把 JDK / SDK 放在特定位置，�
 - 单页 PNG、整本 PDF（A4 比例 595×842pt，矢量笔迹）、整本 `.zip` 备份
 - 恢复备份会新建一个笔记本，不覆盖已有笔记
 - 全部走 SAF 文件选择器，不申请任何存储权限
+
+## 1.5.1 更新（关掉系统自动备份）
+
+`AndroidManifest.xml` 里的 `android:allowBackup` 从 `true` 改成了 `false`。
+
+原来这个开关是默认值 `true`，系统会把 `filesDir` 下的笔记库自动同步到 Google Drive（装了
+Google 备份服务的机器上）。这和「纯本地存储」的承诺是矛盾的——笔记虽然写在私有目录里，
+却仍然被上传了一份。现在关闭后，应用数据只存在于本机，卸载即消失。
+
+功能上没有变化，手写、导入、导出、备份 zip 全部照旧。
 
 ## 1.5.0 更新（花括号画成了方角：切线方向反了 90°）
 

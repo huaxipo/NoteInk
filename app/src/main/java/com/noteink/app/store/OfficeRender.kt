@@ -916,6 +916,8 @@ internal object OfficeRender {
         var styleFontColor = 0
         var fillExplicit = false
         var lnExplicit = false
+        var lnNoFill = false   // <a:ln><a:noFill/>：明确不要边框，不能再回退到 lnRef
+        var useBgFill = false  // <p:sp useBgFill="1">：填充取自幻灯片背景，由背景层负责
 
         fun resetShape() {
             inSpPr = false
@@ -958,6 +960,8 @@ internal object OfficeRender {
             styleFontColor = 0
             fillExplicit = false
             lnExplicit = false
+            lnNoFill = false
+            useBgFill = false
         }
 
         // 段落 / 文字片段状态
@@ -1088,6 +1092,8 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
                         pendBullet = null
                         bulletDone = true
                         resetShape()
+                        // 属性写在 <p:sp> 上，必须在 resetShape() 之后读
+                        useBgFill = attr(p, "useBgFill") == "1"
                         sb.clear()
                         paraStart = 0
                         paraMarL = 0f
@@ -1218,6 +1224,7 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
                     "noFill" -> if (inLn) {
                         lineOn = false
                         lnExplicit = true
+                        lnNoFill = true
                     } else if (inSpPr) {
                         fillKind = 0
                         fillExplicit = true
@@ -1737,19 +1744,25 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
                                 !isPromptText(sb)
                             // 图片形状：几何只用来定位，不当作填色路径重画一遍
                             val geo = if (isPic) null else shapePath
-                            val effFillPresent = if (fillExplicit) fillKind != 0 else
-                                (fillKind != 0 || styleFill != null)
+                            val effFillPresent = when {
+                                // useBgFill 的填充就是整页背景，背景层已经画过。按 p:style
+                                // 的 fillRef 重画一遍，母版装饰条会变成两条实心白线。
+                                useBgFill && !fillExplicit -> false
+                                fillExplicit -> fillKind != 0
+                                else -> fillKind != 0 || styleFill != null
+                            }
                             val ownLine = if (lineWidth > 0f && lineOn) {
                                 PptxShape.Line(lineColor, lineWidth, lineDash, lineHead, lineTail)
                             } else null
-                            // 只写了 w / 箭头、没写颜色的 <a:ln>，颜色仍然来自 lnRef
-                            val lnEff = ownLine ?: styleLine?.let {
+                            // 只写了 w / 箭头、没写颜色的 <a:ln>，颜色仍然来自 lnRef；
+                            // 但写了 <a:noFill/> 的就是明确不要边框，不能回退。
+                            val lnEff = if (lnNoFill) null else (ownLine ?: styleLine?.let {
                                 PptxShape.Line(
                                     it.color,
                                     if (lineWidth > 0f) lineWidth else it.width,
                                     lineDash, lineHead, lineTail
                                 )
-                            }
+                            })
                             val hasFill = !isPic && geo != null && effFillPresent
                             val hasLine = geo != null && lnEff != null
                             val hasShape = hasFill || hasLine
@@ -1775,7 +1788,8 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
                                     else -> null
                                 }
                                 // 自己没写填充/描边时，用 p:style 从主题样式表里取的那一套
-                                val fill = if (fillExplicit) ownFill else (styleFill ?: ownFill)
+                                val fill = if (useBgFill && !fillExplicit) null
+                                else if (fillExplicit) ownFill else (styleFill ?: ownFill)
                                 val ln = lnEff
                                 ops.add(
                                     SlideOp(
@@ -1943,7 +1957,7 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
      * 于是「明明修好了，看到的还是旧样子」。把这个版本号写进 meta.json，
      * 打开笔记本时发现版本落后就用源文件重画一遍底图（笔迹不受影响）。
      */
-    const val RENDER_VERSION = 12
+    const val RENDER_VERSION = 13
 
     /** 这些占位符在 PowerPoint 里不继承项目符号（标题、副标题、页脚、页码、日期） */
     private val NO_BULLET_PH =

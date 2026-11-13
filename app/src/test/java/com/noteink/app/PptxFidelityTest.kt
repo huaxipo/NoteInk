@@ -1,6 +1,8 @@
 package com.noteink.app
 
+import android.graphics.RectF
 import android.text.Layout
+import com.noteink.app.ink.tileGrid
 import com.noteink.app.store.OfficeRender
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -71,6 +73,35 @@ class PptxFidelityTest {
     }
 
     @Test
+    fun highResTilesNeverExtendOutsideThePage() {
+        // 页面 1240x700 居中显示：可见区域四周都比页面大，left/top 为负
+        val g = tileGrid(RectF(-260f, -90f, 1500f, 820f), 384f, 1240, 700)!!
+        val (x0, y0, x1, y1) = g
+        assertEquals(0, x0)
+        assertEquals(0, y0)
+        assertEquals(3, x1)   // floor(1240/384)
+        assertEquals(1, y1)   // floor(700/384)
+        for (gy in y0..y1) for (gx in x0..x1) {
+            val left = gx * 384f
+            val top = gy * 384f
+            val right = minOf(left + 384f, 1240f)
+            val bottom = minOf(top + 384f, 700f)
+            assertTrue(left >= 0f && top >= 0f)
+            assertTrue(right <= 1240f && bottom <= 700f)
+            assertTrue(right > left && bottom > top)
+        }
+    }
+
+    @Test
+    fun highResTilesClampOversizedViewport() {
+        val g = tileGrid(RectF(0f, 0f, 9999f, 9999f), 384f, 1240, 700)!!
+        assertArrayEquals(intArrayOf(0, 0, 3, 1), g)
+        assertNull(tileGrid(RectF(2000f, 2000f, 2500f, 2500f), 384f, 1240, 700))
+        assertNull(tileGrid(RectF(-900f, -900f, -800f, -800f), 384f, 1240, 700))
+        assertNull(tileGrid(RectF(0f, 0f, 100f, 100f), 0f, 1240, 700))
+    }
+
+    @Test
     fun parsesSimpleSvgPrimitives() {
         val svg = "<svg width=\"420\" height=\"420\" viewBox=\"0 0 420 420\">" +
             "<circle cx=\"210\" cy=\"210\" r=\"145\" fill=\"none\" stroke=\"#D6DCE5\" " +
@@ -109,6 +140,21 @@ class PptxFidelityTest {
                 println("  #$i x=${o.x.toInt()} y=${o.y.toInt()} w=${o.w.toInt()} " +
                     "align=${o.align} noWrap=${o.noWrap} $pic text='$t'")
             }
+            println("BACK ${art.back.size}")
+            for ((i, o) in art.back.withIndex()) {
+                println("  @$i x=${o.x.toInt()} y=${o.y.toInt()} w=${o.w.toInt()} " +
+                    "h=${o.h.toInt()} fill=${o.fill != null} line=${o.line != null} " +
+                    "text='${o.text?.toString()?.take(20)}'")
+            }
+            // 母版上 useBgFill="1" + <a:ln><a:noFill/> 的装饰条，不该被
+            // p:style 的 fillRef/lnRef 填成两条实心白线
+            assertTrue(
+                "母版极扁装饰条不应同时带填充与描边",
+                art.back.none {
+                    it.h > 0f && it.h < 12f && it.w > 200f &&
+                        it.fill != null && it.line != null
+                }
+            )
         } finally {
             art.release()
         }

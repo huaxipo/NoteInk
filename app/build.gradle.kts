@@ -11,8 +11,8 @@ android {
         applicationId = "com.noteink.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "1.5.2"
+        versionCode = 23
+        versionName = "1.5.3"
     }
 
     buildTypes {

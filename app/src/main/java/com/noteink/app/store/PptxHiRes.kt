@@ -7,10 +7,10 @@ import android.graphics.Paint
 import android.graphics.RectF
 import com.noteink.app.ink.HiResSource
 import com.noteink.app.ink.HiResTile
+import com.noteink.app.ink.tileGrid
 import java.io.File
 import java.util.concurrent.Executors
 import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -70,10 +70,10 @@ class PptxHiRes(
         val bandKey = (band * 10f).roundToInt()
         val cell = TILE_PX / band
 
-        val x0 = floor(visible.left / cell).toInt()
-        val x1 = floor(visible.right / cell).toInt()
-        val y0 = floor(visible.top / cell).toInt()
-        val y1 = floor(visible.bottom / cell).toInt()
+        // 页面居中时可见区域比页面大，left/top 为负。瓦片是先整块涂白再画内容的，
+        // 绝不能生成页面外的瓦片，否则那块白色会盖在米色画布上，像页面缺了一角。
+        val grid = tileGrid(visible, cell, pageW, pageH) ?: return
+        val (x0, y0, x1, y1) = grid
 
         var count = 0
         for (gy in y0..y1) {

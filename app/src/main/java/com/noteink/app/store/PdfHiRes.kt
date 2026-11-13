@@ -10,6 +10,7 @@ import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import com.noteink.app.ink.HiResSource
 import com.noteink.app.ink.HiResTile
+import com.noteink.app.ink.tileGrid
 import java.io.File
 import java.util.concurrent.Executors
 import kotlin.math.ceil
@@ -75,10 +76,9 @@ class PdfHiRes(
         val bandKey = (band * 10f).roundToInt()
         val cell = TILE_PX / band
 
-        val x0 = floor(visible.left / cell).toInt()
-        val x1 = floor(visible.right / cell).toInt()
-        val y0 = floor(visible.top / cell).toInt()
-        val y1 = floor(visible.bottom / cell).toInt()
+        // 瓦片位图先整块涂白，页面外的瓦片会把白色贴到画布留白区，必须裁掉
+        val grid = tileGrid(visible, cell, pageW, pageH) ?: return
+        val (x0, y0, x1, y1) = grid
 
         // 只处理与页面相交的块；最多 MAX_TILES_VISIBLE 块，避免极端缩放下一次请求几十块
         var count = 0

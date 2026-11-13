@@ -11,8 +11,8 @@ android {
         applicationId = "com.noteink.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.5.1"
+        versionCode = 22
+        versionName = "1.5.2"
     }
 
     buildTypes {
@@ -50,7 +50,13 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
-            all { it.systemProperty("robolectric.logging", "stdout") }
+            all {
+                it.systemProperty("robolectric.logging", "stdout")
+                // 样张不入库：gradle -Dpptx.sample=<path> 会把路径转给测试 JVM
+                for (k in listOf("pptx.sample", "pptx.page")) {
+                    System.getProperty(k)?.let { v -> it.systemProperty(k, v) }
+                }
+            }
         }
     }
 }

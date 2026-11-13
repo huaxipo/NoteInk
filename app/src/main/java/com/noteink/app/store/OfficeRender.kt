@@ -798,6 +798,27 @@ internal object OfficeRender {
     private val PREVIEW_LABEL =
         Regex("preview|预览|render|snapshot|\\.(png|jpg|jpeg|webp|bmp)", RegexOption.IGNORE_CASE)
 
+    /**
+     * PowerPoint 2016+ 的矢量图片把引用放在 `a:blip/a:extLst/a:ext/asvg:svgBlip` 里，
+     * 外层 `<a:blip>` 可能连 `r:embed` 都没有（也不给 PNG 回退图）。渲染器按 `r:embed`
+     * 取图，这种形状就会整块消失 —— 本页左侧的四个圆圈和虚线环就是这样没的。
+     *
+     * 这里把 svgBlip 的 rId 提到外层 `a:blip` 上，流式解析逻辑完全不用改；
+     * 外层本来就有 `r:embed` 时保留它（优先用位图回退图）。
+     */
+    // (?<!/) 排除自闭合的 <a:blip r:embed="..."/>，否则会一路吞到下一个 </a:blip>
+    private val SVG_BLIP_BLOCK =
+        Regex("<a:blip\\b([^>]*)(?<!/)>(.*?)</a:blip>", RegexOption.DOT_MATCHES_ALL)
+    private val SVG_EMBED = Regex("svgBlip[^>]*?(?:r:)?embed=\"([^\"]+)\"")
+
+    internal fun hoistSvgBlipRefs(xml: String): String = SVG_BLIP_BLOCK.replace(xml) { m ->
+        val attrs = m.groupValues[1]
+        val body = m.groupValues[2]
+        if (Regex("(?:^|\\s)(?:r:)?embed\\s*=").containsMatchIn(attrs)) return@replace m.value
+        val rid = SVG_EMBED.find(body)?.groupValues?.get(1) ?: return@replace m.value
+        "<a:blip$attrs r:embed=\"$rid\">$body</a:blip>"
+    }
+
     private fun parseSlide(
         xml: String,
         rels: Map<String, String>,
@@ -817,7 +838,7 @@ internal object OfficeRender {
         val ops = ArrayList<SlideOp>()
         val p = Xml.newPullParser()
         p.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, true)
-        p.setInput(ByteArrayInputStream(xml.toByteArray(Charsets.UTF_8)), "UTF-8")
+        p.setInput(ByteArrayInputStream(hoistSvgBlipRefs(xml).toByteArray(Charsets.UTF_8)), "UTF-8")
 
         val pxPerPt = EMU_PER_INCH * pxPerEmu / 72f
         val inch = EMU_PER_INCH * pxPerEmu
@@ -1889,7 +1910,11 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
             while (e != null) {
                 if (e.name in names) {
                     readBytesCapped(zip, MAX_IMAGE_BYTES)?.let { bytes ->
-                        decodeCapped(bytes, 1600)?.let { byPath[e.name] = it }
+                        val bmp = if (e.name.endsWith(".svg", ignoreCase = true))
+                            rasterizeSvg(String(bytes, Charsets.UTF_8))
+                        else
+                            decodeCapped(bytes, 1600)
+                        if (bmp != null) byPath[e.name] = bmp
                     }
                 }
                 e = zip.nextEntry
@@ -1918,7 +1943,7 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
      * 于是「明明修好了，看到的还是旧样子」。把这个版本号写进 meta.json，
      * 打开笔记本时发现版本落后就用源文件重画一遍底图（笔迹不受影响）。
      */
-    const val RENDER_VERSION = 11
+    const val RENDER_VERSION = 12
 
     /** 这些占位符在 PowerPoint 里不继承项目符号（标题、副标题、页脚、页码、日期） */
     private val NO_BULLET_PH =
@@ -2229,6 +2254,19 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
         "Clicktoaddtext", "Clicktoaddtitle", "Clicktoaddsubtitle"
     )
 
+    /**
+     * 文字布局的起始 x。
+     *
+     * [avail] 可能比形状框宽（短标签防折行、或者 `wrap="none"` 留的余量），此时
+     * StaticLayout 是相对 [avail] 对齐的。居中/右对齐要补回差值，左对齐则不能动。
+     */
+    internal fun textOriginX(op: SlideOp, avail: Float, pad: Float): Float = when {
+        avail <= op.w + 1f -> op.x + pad
+        op.align == Layout.Alignment.ALIGN_CENTER -> op.x + (op.w - avail) * 0.5f + pad
+        op.align == Layout.Alignment.ALIGN_OPPOSITE -> op.x + (op.w - avail) + pad
+        else -> op.x + pad
+    }
+
     private fun drawText(c: Canvas, op: SlideOp, tp: TextPaint) {
         val txt = op.text
         if (txt == null || txt.isEmpty()) return
@@ -2273,11 +2311,12 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
             2 -> op.y + op.h - layout.height
             else -> op.y
         }
-        // 为了不折行把可用宽度撑宽了，居中文字要跟着回正，否则会往右偏半个框
-        val tx = if (avail > op.w + 1)
-            op.x + (op.w - avail) * 0.5f + pad
-        else
-            op.x + pad
+        // 只有居中/右对齐才需要把布局的「中心 / 右边界」拉回形状框内：StaticLayout
+        // 是相对 avail 对齐的，avail 被撑宽后，文字会整体往右偏半个框。
+        // 左对齐必须保持在 op.x —— 早先对所有形状一律减去 (avail-w)/2，
+        // wrap="none" 的文本框（avail 恒为 1.3*w）因此被往左推了 15% 框宽：
+        // 底部横幅的「竞品」被推出页外裁掉，标题左移后还盖住了 01/02/03 编号。
+        val tx = textOriginX(op, avail.toFloat(), pad)
         c.save()
         c.translate(tx, dy)
         // 艺术字：先用描边色把整段文字描一遍（STROKE），再把正常填充叠上去。
@@ -2953,6 +2992,129 @@ paraSzPt = if (ownSz[lvl] > 0f) ownSz[lvl] else 18f
             }
         }
         return parts.joinToString("/")
+    }
+
+    // ======================= 极简 SVG 光栅化 =======================
+
+    /**
+     * PPTX 的 svgBlip 大多是导出工具生成的装饰图形：只有 circle / ellipse / rect / line，
+     * 配 fill、stroke、stroke-dasharray。Android 没有内置 SVG 解码器，这里把这几个
+     * 基本图形直接画成位图；复杂路径（插画级 SVG）暂时忽略，宁可少画也不引入三方库。
+     */
+    private val SVG_TAG = Regex("<(circle|ellipse|rect|line)\\b([^>]*)/?>")
+    private val SVG_ATTR = Regex("([\\w:-]+)\\s*=\\s*\"([^\"]*)\"")
+
+    internal class SvgPrim(
+        val kind: String,
+        val v: FloatArray,
+        val fill: Int?,
+        val stroke: Int?,
+        val sw: Float,
+        val dash: FloatArray?
+    ) {
+        fun draw(c: Canvas, p: Paint, style: Paint.Style) {
+            p.style = style
+            when (kind) {
+                "circle" -> if (v.size >= 3) c.drawCircle(v[0], v[1], v[2], p)
+                "ellipse" -> if (v.size >= 4) c.drawOval(
+                    RectF(v[0] - v[2], v[1] - v[3], v[0] + v[2], v[1] + v[3]), p
+                )
+                "rect" -> if (v.size >= 4) c.drawRect(
+                    RectF(v[0], v[1], v[0] + v[2], v[1] + v[3]), p
+                )
+                "line" -> if (v.size >= 4) c.drawLine(v[0], v[1], v[2], v[3], p)
+            }
+        }
+    }
+
+    internal class SimpleSvg(val w: Float, val h: Float, val prims: List<SvgPrim>)
+
+    private fun svgAttrs(s: String): Map<String, String> {
+        val m = HashMap<String, String>()
+        for (a in SVG_ATTR.findAll(s)) m[a.groupValues[1].lowercase()] = a.groupValues[2]
+        return m
+    }
+
+    private fun svgColor(v: String?): Int? {
+        if (v == null) return null
+        val s = v.trim().lowercase()
+        if (s.isEmpty() || s == "none" || s == "transparent") return null
+        return try {
+            if (s.startsWith("rgb")) {
+                val n = Regex("\\d+").findAll(s).map { it.value.toInt() }.toList()
+                if (n.size >= 3) 0xFF000000.toInt() or (n[0] shl 16) or (n[1] shl 8) or n[2]
+                else null
+            } else Color.parseColor(s)
+        } catch (t: Throwable) {
+            parseColor(s)
+        }
+    }
+
+    private fun svgFloats(v: String?): FloatArray? = v?.trim()
+        ?.split(Regex("[\\s,]+"))
+        ?.mapNotNull { it.toFloatOrNull() }
+        ?.toFloatArray()
+        ?.takeIf { it.isNotEmpty() }
+
+    internal fun parseSimpleSvg(text: String): SimpleSvg? {
+        val root = Regex("<svg\\b([^>]*)>").find(text) ?: return null
+        val a = svgAttrs(root.groupValues[1])
+        val vb = svgFloats(a["viewbox"])
+        val side = { key: String -> a[key]?.filter { it.isDigit() || it == '.' }?.toFloatOrNull() }
+        val w = vb?.getOrNull(2) ?: side("width") ?: 100f
+        val h = vb?.getOrNull(3) ?: side("height") ?: 100f
+        if (w <= 0f || h <= 0f) return null
+
+        val prims = ArrayList<SvgPrim>()
+        for (m in SVG_TAG.findAll(text)) {
+            val kind = m.groupValues[1]
+            val at = svgAttrs(m.groupValues[2])
+            fun f(k: String) = at[k]?.toFloatOrNull() ?: 0f
+            val v = when (kind) {
+                "circle" -> floatArrayOf(f("cx"), f("cy"), f("r"))
+                "ellipse" -> floatArrayOf(f("cx"), f("cy"), f("rx"), f("ry"))
+                "rect" -> floatArrayOf(f("x"), f("y"), f("width"), f("height"))
+                else -> floatArrayOf(f("x1"), f("y1"), f("x2"), f("y2"))
+            }
+            // SVG 规范：未写 fill 时默认黑色；line 没有填充面
+            val fill = if (at.containsKey("fill")) svgColor(at["fill"])
+            else if (kind == "line") null else 0xFF000000.toInt()
+            prims.add(
+                SvgPrim(
+                    kind, v, fill, svgColor(at["stroke"]),
+                    at["stroke-width"]?.toFloatOrNull() ?: 1f,
+                    svgFloats(at["stroke-dasharray"])
+                )
+            )
+        }
+        return if (prims.isEmpty()) null else SimpleSvg(w, h, prims)
+    }
+
+    /** 把 [parseSimpleSvg] 的结果栅格化；按 viewBox 等比放大，避免细虚线糊掉。 */
+    internal fun rasterizeSvg(text: String, maxSide: Int = 1200): Bitmap? {
+        val svg = parseSimpleSvg(text) ?: return null
+        val k = (maxSide.toFloat() / max(svg.w, svg.h)).coerceAtMost(4f)
+        val bw = ceil(svg.w * k).toInt().coerceIn(1, 1600)
+        val bh = ceil(svg.h * k).toInt().coerceIn(1, 1600)
+        val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.TRANSPARENT)
+        c.scale(bw / svg.w, bh / svg.h)
+        val fp = Paint(Paint.ANTI_ALIAS_FLAG)
+        val sp = Paint(Paint.ANTI_ALIAS_FLAG)
+        for (pr in svg.prims) {
+            if (pr.fill != null) {
+                fp.color = pr.fill
+                pr.draw(c, fp, Paint.Style.FILL)
+            }
+            if (pr.stroke != null && pr.sw > 0f) {
+                sp.color = pr.stroke
+                sp.strokeWidth = pr.sw
+                sp.pathEffect = pr.dash?.let { if (it.size >= 2) DashPathEffect(it, 0f) else null }
+                pr.draw(c, sp, Paint.Style.STROKE)
+            }
+        }
+        return bmp
     }
 
     private fun decodeCapped(bytes: ByteArray, maxW: Int): Bitmap? {
